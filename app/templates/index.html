@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Рейтинг колледжей по ROI</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h1>Рейтинг колледжей США по выгодности образования (ROI)</h1>
+
+<form method="get" class="filters">
+
+    <input type="text"
+           name="search"
+           placeholder="Поиск по названию колледжа"
+           value="{{ search or '' }}">
+
+    <select name="state">
+        <option value="ALL">Все штаты</option>
+        {% for st in states %}
+        <option value="{{ st }}" {% if st == selected_state %}selected{% endif %}>
+            {{ st }}
+        </option>
+        {% endfor %}
+    </select>
+
+    <select name="top">
+        <option value="10" {% if top_n == 10 %}selected{% endif %}>Top-10</option>
+        <option value="50" {% if top_n == 50 %}selected{% endif %}>Top-50</option>
+        <option value="100" {% if top_n == 100 %}selected{% endif %}>Top-100</option>
+        <option value="1000" {% if top_n == 1000 %}selected{% endif %}>Top-1000</option>
+    </select>
+
+    <button type="submit">Применить</button>
+</form>
+
+<table>
+    <thead>
+        <tr>
+            <th>Колледж</th>
+            <th>Город</th>
+            <th>Штат</th>
+            <th>Стоимость обучения ($)</th>
+            <th>Ожидаемый доход ($)</th>
+            <th>ROI</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in tables %}
+        <tr>
+            <td>{{ row["INSTNM"] }}</td>
+            <td>{{ row["CITY"] }}</td>
+            <td>{{ row["STABBR"] }}</td>
+            <td>{{ row["COSTT4_A"] }}</td>
+            <td>{{ row["predicted_income"] }}</td>
+            <td>{{ row["ROI"] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2>Зависимость дохода выпускников от стоимости обучения</h2>
+<canvas id="incomeCostChart"></canvas>
+
+<h2>ROI в зависимости от стоимости обучения</h2>
+<canvas id="roiCostChart"></canvas>
+
+<script>
+const data = {{ chart_data | safe }};
+
+const rois = data.y.map((y, i) => y / data.x[i]);
+const minROI = Math.min(...rois);
+const maxROI = Math.max(...rois);
+
+function roiColor(roi) {
+    const t = (roi - minROI) / (maxROI - minROI);
+    const r = Math.round(255 * (1 - t));
+    const g = Math.round(180 * t);
+    return `rgba(${r}, ${g}, 0, 0.5)`;
+}
+
+const points = data.x.map((x, i) => ({
+    x: x,
+    y: data.y[i],
+    label: data.labels[i],
+    backgroundColor: roiColor(rois[i])
+}));
+
+function linearRegression(points) {
+    const n = points.length;
+    const sumX = points.reduce((s, p) => s + p.x, 0);
+    const sumY = points.reduce((s, p) => s + p.y, 0);
+    const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
+    const sumX2 = points.reduce((s, p) => s + p.x * p.x, 0);
+
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+
+    const xs = [Math.min(...data.x), Math.max(...data.x)];
+    return xs.map(x => ({ x: x, y: slope * x + intercept }));
+}
+
+const trendLine = linearRegression(points);
+
+// ===== ГРАФИК 1: Доход vs Стоимость =====
+new Chart(document.getElementById("incomeCostChart"), {
+    type: "scatter",
+    data: {
+        datasets: [
+            {
+                label: "Колледжи",
+                data: points,
+                backgroundColor: points.map(p => p.backgroundColor),
+                pointRadius: 4,
+                pointHoverRadius: 6
+            },
+            {
+                label: "Тренд",
+                data: trendLine,
+                type: "line",
+                borderColor: "rgba(231, 76, 60, 0.9)",
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: false
+            }
+        ]
+    },
+    options: {
+        plugins: {
+            tooltip: {
+                callbacks: {
+                    label: ctx => ctx.raw.label || ""
+                }
+            }
+        },
+        scales: {
+            x: {
+                title: {
+                    display: true,
+                    text: "Стоимость обучения ($)"
+                }
+            },
+            y: {
+                title: {
+                    display: true,
+                    text: "Ожидаемый доход выпускников ($)"
+                }
+            }
+        }
+    }
+});
+
+new Chart(document.getElementById("roiCostChart"), {
+    type: "scatter",
+    data: {
+        datasets: [{
+            label: "ROI",
+            data: data.x.map((x, i) => ({ x: x, y: rois[i] })),
+            backgroundColor: rois.map(r => roiColor(r)),
+            pointRadius: 4
+        }]
+    },
+    options: {
+        plugins: {
+            legend: { display: false }
+        },
+        scales: {
+            x: {
+                title: {
+                    display: true,
+                    text: "Стоимость обучения ($)"
+                }
+            },
+            y: {
+                title: {
+                    display: true,
+                    text: "ROI (доход / стоимость)"
+                }
+            }
+        }
+    }
+});
+</script>
+
+<p class="note">
+    Данные визуализированы на основе модели машинного обучения (Random Forest).
+</p>
+
+</body>
+</html>
